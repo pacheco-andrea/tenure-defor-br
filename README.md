@@ -9,6 +9,8 @@ This repository contains all the main code for analyzing the causal effects of d
 * Matching: carries out coarsened-exact-matching
 * Stats: carries out statistical analysis
 
+Note about how code should be interpreted as a guide ...
+
 ### Data
 The data for this analysis is freely available at: http://atlasagropecuario.imaflora.org/.
 This analysis was carried out using v. 1812.
