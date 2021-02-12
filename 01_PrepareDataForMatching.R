@@ -5,46 +5,77 @@
 # This script reads in shapefiles that have the unique ID (gid) for all parcels in Brazil, for one biome at a time in order to manage computational sizes. (This is part A)
 # It reads in extractions of covariates that Ruben produced on the cluster. (This is part B)
 # It puts these two pieces of info together, and reads in the other tenure info from Imaflora as sqlite databases. (This is part C)
-# It puts all this info together, and reclassifies all original tenure forms into our actually 7 categories.
+# It puts all this info together, and reclassifies all original tenure forms into 7 categories.
 # the output is shapefiles for each biome with columns ready for matching and new tenure categories
 
-setwd("~/data/MAS-group-share/04_personal/Andrea/P1_analysis/code/")
-source("00_Setting_Parameters.R")
+library(readr)
+library(dplyr)
+library(DBI)
+library(foreign)
+library(tidyr)
+
+# set parameters ----
+temporalExtents = c("1985_2018", "1985_1990", "1991_1995", "1996_1999", "2000_2004", "2005_2012", "2013_2018") # vector with temporal ranges (all chunks + total)
+spatialExtents = c("Brazil", "Amazonia", "Caatinga", "Cerrado", "MataAtlantica", "Pampa", "Pantanal") # all biomes + total
+
+responseVars = c("forest_original", "forest_change", "natural_original", "natural_change")
+
+controlVars = c("private","public")
+treatmentVars = c("private","public", "protected", "sustainable_use", "indigenous", "communal", "quilombola")
+# for each item in controlVars, duplicatre treatmentVars and eliminate this item
+
+# define covariates used in matching
+matchingVars = c("elevation", "slope", "travel_time", "population_dens")
+
+# define covariates used in statistical models on matched data
+nonspatial_modelCovars = c(matchingVars, "state", "area")
+spatial_modelCovars = c(nonspatial_modelCovars, "rac") # residuals autocovariate is calculated from the non spatial models
+
+# define manual cutpoints (for making bins) for the coarsened matching
+travel_cut = c(0,240,360,720,1440) # by hours (0,2,6,12,24)
+area_cut = c(0,2,5,15,50,100,500,1000,5000,10000,50000,100000,500000,1000000) # 14 classes of property sizes 
+todrop = c("gid", "tenure", "state", "biome")
 
 
 # READ IN DATA ----
+wdmain <- "/gpfs1/data/idiv_meyer/01_projects/Andrea/P1"
+wd_env_extractions <- paste0(wdmain, "/inputs/00data/env/")
+wd_shapes <- paste0(wdmain, "/inputs/00data/shp/")
+wd_tenurelite <- paste0(wdmain, "/inputs/00data/tenure_lites/")
+wd_output <- paste0(wdmain, "/inputs/00data/for_matching/forMatchAnalysis/")
 
-wd_env_extractions <- ("~/data/MAS-group-share/04_personal/Andrea/P1_analysis/inputs/00_data/env/")
-wd_shapes <- ("~/data/MAS-group-share/04_personal/Andrea/P1_analysis/inputs/00_data/shp/")
-wd_tenurelite <- ("~/data/MAS-group-share/04_personal/Andrea/P1_analysis/inputs/00_data/tenure_lites/")
-wd_output <- ("~/data/MAS-group-share/04_personal/Andrea/P1_analysis/inputs/00_data/for_matching/forMatchAnalysis/")
 
-
-# shapefiles that only have gid were pre-processed. read in only dbfs (tables with only id's):
+# shapefiles that only have gid - read in only dbfs (tables with only id's)
 setwd(wd_shapes)
 gids <- list.files()
-gids <- gids[grep(".dbf",gids)] 
+gids <- gids[grep(".dbf",gids)] # order is alphabetical
 gids <- lapply(gids, read.dbf)
 gids_brasil <- bind_rows(gids)
+#nrow(gids_brasil)
 
-# environmental extractions (pre-processed on the HPC)
+# environmental extractions (produced by ruben, ran on the cluster)
 setwd(paste0(wd_env_extractions, "other_fixed_covars/"))
 env_data <- list.files()
 env_data <- lapply(env_data, read_csv)
 env_data_brasil <- bind_rows(env_data)
+#summary(env_data_brasil) 
+#nrow(env_data_brasil) 
+#nrow(gids_brasil) #check these coincide exactly in numbers
+
 env_data_brasil <- cbind(gids_brasil, env_data_brasil[,2:4])
 
-# population data ----
+# population extractions
+
 setwd(paste0(wd_env_extractions, "population_1990-2015/"))
 pop_data <- list.files()
 pop_data <- lapply(pop_data, read_csv)
 pop_data <- bind_rows(pop_data)
-summary(pop_data)
+#summary(pop_data)
 pop_data <- pop_data[which(pop_data$p1975 >= 0),]
-summary(pop_data)
+#summary(pop_data)
 
-# interpolate/extrapolate population averages for time periods we need 
-tempExtent <- c(1985,2018) # max and min extent
+
+tempExtent <- c(1985,2018) # define here, but could also be defined by temporalExtents!
 pop_IntExtrapolate <- function(pop_data, tempExtent){
   
   years <- as.numeric(gsub("p","", names(pop_data)[grep("^p[0-9]", names(pop_data) )]))
@@ -76,7 +107,7 @@ pop_IntExtrapolate <- function(pop_data, tempExtent){
   intervals <- grep("^p",names(data))
   for(i in 1:(length(years)-1)) # for all intervals available
   {
-    # first year - last year for absolute change:
+    # ruben says this needs to be: first year - last year for it to be absolute change:
     inc <- (data[,intervals[i+1]]-data[,intervals[i]])/(intervals[i+1] - intervals[i]) # calculate the "x", i.e. the increase 
     # (last year there's data - first year there's data ) / (amount of years there's no data: second interval - first interval) 
     if(i!=length(intervals)){
@@ -90,7 +121,7 @@ pop_IntExtrapolate <- function(pop_data, tempExtent){
         if(tempExtent[1] < years[1]){
           for(k in 1:(years[1] - tempExtent[1]))
           {
-            data[,paste0("e", tempExtent[1]+k-1)] <- data[,paste0("p", years[1])] - (seq((years[1] - tempExtent[1]), 1, -1)[k] * inc)     # (((years[1] - tempExtent[1])- 1 + k )*inc)
+            data[,paste0("e", tempExtent[1]+k-1)] <- data[,paste0("p", years[1])] - (seq((years[1] - tempExtent[1]), 1, -1)[k] * inc)     # (((years[1] - tempExtent[1])- 1 + k )*inc) # no sería 5, pero si no esa relación inversa. but actually we want the inc here!
             # data of base year - the increase that we've calculated * 5-4-3-2-1
           }
           
@@ -110,9 +141,9 @@ pop_IntExtrapolate <- function(pop_data, tempExtent){
   return(data) # returns dataframe where p is the real value, i is interpolated, and e is extrapolated
 }
 pop_data_new <- pop_IntExtrapolate(pop_data, tempExtent)
-summary(pop_data_new)
+#summary(pop_data_new)
 
-for(i in 2:length(pop_data_new)) # fix negative values: we will simply leave at 0 (no negative population densities)
+for(i in 2:length(pop_data_new)) # fix negative values, simply leave at 0. because we can't predict a negative population density. 
 {
   pop_data_new[i][which(pop_data_new[i] <0),] <- 0
 }
@@ -141,9 +172,17 @@ myPopData <- function(output_int.ext, temporalExtents){
   
   return(data)
 }
+
+
 pop_data_brasil <- myPopData(pop_data_new, temporalExtents)
 
-# bind population together w environmental covariate data
+# summary(pop_data_brasil)
+# nrow(pop_data_brasil) # must also coincide exactly with gids brasil
+
+
+# join data ----
+
+# bind together environmental covariate data
 env_coVars_brasil <- merge(env_data_brasil, pop_data_brasil, by = "gid")
 summary(env_coVars_brasil)
 nrow(env_coVars_brasil)
@@ -153,8 +192,7 @@ neg1 <- env_coVars_brasil[which(env_coVars_brasil$p1985_1990 < 0),]
 nrow(neg1)
 summary(env_coVars_brasil)
 
-# recategorize tenure data ----
-# originally in biome sqlites
+# original tenure data in sqlite form
 setwd(wd_tenurelite)
 con <- dbConnect(drv = RSQLite::SQLite(), dbname = "Amazonia_lite.sqlite") # connect to database for sqlite reading
 con_amazonia <- dbReadTable(con, "amazonia_lite")
@@ -180,20 +218,61 @@ con <- dbConnect(drv = RSQLite::SQLite(), dbname = "Pantanal_lite.sqlite") # con
 con_pantanal <- dbReadTable(con, "pantanal_lite")
 dbDisconnect(con)
 
-tenure_brazil <- bind_rows(con_amazonia, con_caatinga, con_cerrado, con_mata, con_pampa, con_pantanal)
+tenure_brazil <- rbind(con_amazonia, con_caatinga, con_cerrado, con_mata, con_pampa, con_pantanal)
 nrow(tenure_brazil)
 unique(tenure_brazil$subclass)
 
-# reclassify 
+# reclassify tenure forms!
+
+reclassify_tenuredata <- function(data){
+  data$tenure <- ifelse (data$subclass == "CAR poor", "private",
+                         ifelse (data$subclass == "Transporte", "other",
+                                 ifelse (data$subclass == "Terra Legal titulado", "other", # exclude terra legal from analysis
+                                         ifelse (data$subclass ==  "CAR premium", "private",
+                                                 ifelse (data$subclass == "Não destinado", "public", 
+                                                         ifelse (data$subclass == "Urbano", "other",
+                                                                 ifelse (data$subclass == "Assentamento rural", "public",
+                                                                         ifelse (data$subclass == "SIGEF", "private",
+                                                                                 ifelse (data$subclass == "Território comunitário", "communal",
+                                                                                         ifelse (data$subclass == "Água", "other",
+                                                                                                 ifelse (data$subclass == "Terra Legal não titulado", "other", # exclude terra legal from analysis
+                                                                                                         ifelse (data$subclass == "Terra Indígena homologada", "indigenous",
+                                                                                                                 ifelse (data$subclass == "UC Proteção Integral", "protected",
+                                                                                                                         ifelse (data$subclass == "UC Uso Sustentável", "sustainable_use",
+                                                                                                                                 ifelse(data$subclass == "Terra Quilombola","quilombola",   
+                                                                                                                                        ifelse (data$subclass == "Terra Indígena não homologada", "indigenous", "other"))))))))))))))))
+  return(data)
+} 
+
 tenure_brazil <- reclassify_tenuredata(tenure_brazil)
-tenure_brazil_summary <- data.frame(cbind("gid" = tenure_brazil$gid, "tenure" = tenure_brazil$tenure, "area" = tenure_brazil$area_fin, "state" = tenure_brazil$nm_uf, "biome" = tenure_brazil$bioma))
+unique(tenure_brazil$tenure)
+tenure_brazil_summary <- data.frame(cbind("gid" = tenure_brazil$gid, "tenure" = tenure_brazil$tenure, "tenure_orig"=tenure_brazil$subclass, 
+                                          "name"=tenure_brazil$name, "area" = tenure_brazil$area_fin, "state" = tenure_brazil$nm_uf, 
+                                          "mun"= tenure_brazil$nm_mun, "biome" = tenure_brazil$bioma))
 head(tenure_brazil_summary)
 tenure_brazil_summary$area <- as.numeric(as.character(tenure_brazil_summary$area))
 
-# finalize needed df's for matching ----
-# put all data together, and then write as many separate dataframes for matching at every specific spatiotemporal scale: 
+# fix problem gids 1:
+nrow(tenure_brazil_summary)
+# exclude PA which is an island off of mata atlantica for which we can't extract forest change values
+tenure_brazil_summary <- tenure_brazil_summary[which(tenure_brazil_summary$gid != "3855827"),]
+
+# fix problem gids 2:
+# read in gid's i found problematic
+setwd("/gpfs1/data/idiv_meyer/01_projects/Andrea/P1/outputs/fextraction_bug")
+egids <- read.csv("missinggids.csv")
+where <- match(egids$gid, tenure_brazil_summary$gid)
+where <- na.omit(where)
+# reclassify the biome for these specific gids
+# we had an error in getting forest data for them because they're in the wrong biome
+tenure_brazil_summary[where,][which(tenure_brazil_summary[where,]$biome == "CERRADO"),]$biome <- "AMAZÔNIA"
+
+length(unique(as.numeric(as.character(tenure_brazil_summary$gid)))) == nrow(tenure_brazil_summary)
+
+# put all data together, and then write as dataframes for matching: ----
+
 allAnalysisData <- merge(env_coVars_brasil, tenure_brazil_summary, by = "gid")
-# careful manual separation of needed columns:
+
 allAnalysisData_brazil_1985_2018 <- subset(allAnalysisData, select = -c(6:11))
 allAnalysisData_brazil_1985_1990 <- subset(allAnalysisData, select = -c(5,7:11))
 allAnalysisData_brazil_1991_1995 <- subset(allAnalysisData, select = -c(5:6,8:11))
@@ -201,7 +280,8 @@ allAnalysisData_brazil_1996_1999 <- subset(allAnalysisData, select = -c(5:7,9:11
 allAnalysisData_brazil_2000_2004 <- subset(allAnalysisData, select = -c(5:8,10:11))
 allAnalysisData_brazil_2005_2012 <- subset(allAnalysisData, select = -c(5:9,11))
 allAnalysisData_brazil_2013_2018 <- subset(allAnalysisData, select = -c(5:10))
-# create lists of extents
+
+
 allAnalysisData_brazil_temporalextents <- list(allAnalysisData_brazil_1985_2018, 
                                                allAnalysisData_brazil_1985_1990, 
                                                allAnalysisData_brazil_1991_1995, 
@@ -210,21 +290,31 @@ allAnalysisData_brazil_temporalextents <- list(allAnalysisData_brazil_1985_2018,
                                                allAnalysisData_brazil_2005_2012,
                                                allAnalysisData_brazil_2013_2018)
 names(allAnalysisData_brazil_temporalextents) <- temporalExtents
-# write temporal
+
+# write
 setwd(wd_output)
-saveRDS(allAnalysisData_brazil_temporalextents, "allAnalysisData_brazil_temporalextents.rds")
-# spatial extents only need to be split by biome
-allAnalysisData_spatialextents_1985_2018 <- split(allAnalysisData_brazil_1985_2018, allAnalysisData_brazil_1985_2018$biome)
-# write spatial
-setwd(wd_output)
-write_rds(allAnalysisData_spatialextents_1985_2018, "allAnalysisData_spatialextents_1985_2018.rds")
-# write spatio-temporal
-allAnalysisData_spatialextents_temporalextents <- list()
 for(i in 1:length(allAnalysisData_brazil_temporalextents))
+{
+  saveRDS(allAnalysisData_brazil_temporalextents[[i]], paste0(temporalExtents[i], "_Brazil_allAnalysisData.rds"))
+}
+
+
+allAnalysisData_spatialextents_temporalextents <- list()
+for(i in 1:length(allAnalysisData_brazil_temporalextents)) # split each temporal extent into biomes
 {
   allAnalysisData_spatialextents_temporalextents[[i]] <- split(allAnalysisData_brazil_temporalextents[[i]], allAnalysisData_brazil_temporalextents[[i]]$biome)
 }
 names(allAnalysisData_spatialextents_temporalextents) <- temporalExtents
+
 setwd(wd_output)
-write_rds(allAnalysisData_spatialextents_temporalextents, "allAnalysisData_spatialextents_temporalextents.rds")
+for(i in 1:length(allAnalysisData_spatialextents_temporalextents))
+{
+  for(j in 1:length(allAnalysisData_spatialextents_temporalextents[[i]]))
+  {
+    saveRDS(allAnalysisData_spatialextents_temporalextents[[i]][[j]], paste0(names(allAnalysisData_spatialextents_temporalextents)[i],
+                                                                             "_", 
+                                                                             names(allAnalysisData_spatialextents_temporalextents[[i]])[j],
+                                                                             "_", "allAnalysisData.rds" ))
+  }
+}
 
