@@ -43,10 +43,11 @@ fittedTRT <- fitted_tenure[which(mAME[[names(mAME[start][treat])]] == 1)]
 # control group coefficients
 fittedCTRL <- fitted_tenure[which(mAME[[names(mAME[start][treat])]] == 0)]
 # calculate hlsens
-AME_hl <- hlsens(x=fittedTRT, y=fittedCTRL, Gamma=5, GammaInc=1)
+# calculate hlsens
+AME_hl <- hlsens(x=fittedTRT, y=fittedCTRL, Gamma=1.5, GammaInc=.1, pr=0.00001)
 AME_hl$bounds
 
-AME_p <- psens(x=fittedTRT, y=fittedCTRL, Gamma=5, GammaInc=1)
+AME_p <- psens(x=fittedTRT, y=fittedCTRL, Gamma=1.5, GammaInc=.1)
 AME_p$bounds
 
 mybounds <- data.frame("Gamma"=AME_hl$bounds$Gamma, "hl_lower"= AME_hl$bounds[,2], "hl_upper"= AME_hl$bounds[,3],
