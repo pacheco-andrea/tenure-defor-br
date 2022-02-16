@@ -18,9 +18,9 @@ library("rbounds")
 wd_main <- "/gpfs1/data/idiv_meyer/01_projects/Andrea/P1/"
 
 # job:
-setwd(paste0(wd_main, "outputs/GLMs_noTL_clusterMun"))
+setwd(paste0(wd_main, "outputs/generalize_glms"))
 input <- list.files()
-i=as.integer(Sys.getenv('SGE_TASK_ID')) # 553
+i=as.integer(Sys.getenv('SGE_TASK_ID')) 
 
 # get glm 
 myglm <- readRDS(input[i])
@@ -55,7 +55,7 @@ mybounds <- data.frame("Gamma"=AME_hl$bounds$Gamma, "hl_lower"= AME_hl$bounds[,2
 
 # write out
 if(exists("AME_hl")){
-  setwd(paste0(wd_main, "outputs/rbounds"))
+  setwd(paste0(wd_main, "outputs/rboundsTATE"))
   write.csv(mybounds, paste0(n, ".csv"))
 }
 
