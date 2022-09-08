@@ -11,3 +11,5 @@ A detailed description of the underlying data and methods for this analysis is a
 The code in this repository is a guideline to reproduce our work, and as such, it reflects our own data structure, computational assets, and pre-processing steps required for these large-scale analyses (overall expected run-time is ~15 days using high performance computing). It should not be used as an exact template for immediate replication, but should provide guidance to reproduce 1) regression analyses outputs, 2) sensitivity analyses outputs (Rosenbaum bounds), and 3) syntheses tables of effect consistency across scales.
 
 latest update on February 16th, 2022
+
+[![DOI](https://zenodo.org/badge/275821151.svg)](https://zenodo.org/badge/latestdoi/275821151)
